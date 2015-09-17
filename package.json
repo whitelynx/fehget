@@ -1,0 +1,21 @@
+{
+  "name": "fehget",
+  "version": "0.1.0",
+  "description": "HTTP GET utility that views image responses with `feh`.",
+  "main": "fehget",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "http",
+    "get",
+    "image",
+    "feh"
+  ],
+  "author": "David H. Bronke <dbronke@armt.com>",
+  "license": "MIT",
+  "dependencies": {
+    "ansi": "^0.3.0",
+    "bluebird": "^2.10.0"
+  }
+}

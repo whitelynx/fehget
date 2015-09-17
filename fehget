@@ -1,0 +1,178 @@
+#!/usr/bin/env node
+// vim: ft=javascript
+
+var child_process = require('child_process');
+var http = require('http');
+var util = require('util');
+
+var Promise = require('bluebird');
+var ansi = require('ansi');
+
+
+var cursor = ansi(process.stderr);
+
+var debugEnabled = true;
+switch((process.env.DEBUG || '').toLowerCase())
+{
+	case '0':
+	case 'false':
+	case 'no':
+	case 'off':
+		debugEnabled = false;
+} // end switch
+
+
+function _format(args)
+{
+    return util.format.apply(util, args);
+} // end _format
+
+function debug()
+{
+	if(!debugEnabled) { return; }
+    cursor.bold().grey().write('DEBUG: ').reset().grey().write(_format(arguments)).reset().write('\n');
+} // end debug
+
+function status()
+{
+    cursor.bold().cyan().write(_format(arguments)).reset().write('\n');
+} // end status
+
+function error()
+{
+    cursor.bold().red().write('ERROR: ').reset().red().write(_format(arguments)).reset().write('\n');
+} // end error
+
+function ins(val, indent, depth)
+{
+    var output = util.inspect(val, {colors: true, depth: typeof depth === 'number' ? depth : 4});
+
+    if(indent)
+    {
+        output = indent + output.replace(/\n/g, '\n' + indent);
+    } // end if
+
+    return output;
+} // end ins
+
+function formatHex(data)
+{
+    var blockLength = 16;
+    var blocksPerLine = 4;
+    var splitTileData = [];
+    var hexTileData = data.toString('hex');
+    while(hexTileData.length > 0)
+    {
+        var hexLine = [];
+        for(var b = 0; b < blocksPerLine; b++)
+        {
+            hexLine.push(hexTileData.slice(0, blockLength));
+            hexTileData = hexTileData.slice(blockLength);
+        } // end for
+
+        var line = hexLine.join(' ').toUpperCase();
+        splitTileData.push(line);
+    } // end while
+
+    return splitTileData.join('\n');
+} // end formatHex
+
+function httpGet(url)
+{
+    return new Promise(function(resolve, reject)
+    {
+        http.get(url, function(res)
+        {
+            if(res.statusCode == 200)
+            {
+                resolve(res);
+            }
+            else
+            {
+                var err = new Error(util.format("Response failed with %j: %s", res.statusCode, res.statusMessage));
+                err.response = res;
+                reject(err);
+            } // end if
+        })
+            .on('error', reject);
+    });
+} // httpGet
+
+function spawn(command)
+{
+    var proc = {
+        command: command
+    };
+
+    proc.promise = new Promise(function(resolve, reject)
+    {
+        proc.process = child_process.spawn(
+            command[0], command.slice(1),
+            {stdio: ['pipe', process.stdout, process.stderr]}
+        )
+            .on('exit', function(code, signal)
+            {
+                if(signal)
+                {
+                    reject(new Error(util.format('%j process was killed with signal %j.', command[0], signal)));
+                }
+                else if(code !== 0)
+                {
+                    reject(new Error(util.format('%j process exited with code %j.', command[0], code)));
+                }
+                else
+                {
+                    resolve();
+                } // end if
+            })
+            .on('error', reject);
+
+        proc.stdin = proc.process.stdin;
+    });
+
+    return proc;
+} // spawn
+
+// File signatures for a few common image formats: (see http://www.wikiwand.com/en/List_of_file_signatures)
+//                            GIF87a/GIF89a   TIFF LE   TIFF BE      JPEG              PNG
+var imageHexSignaturesRE = /^474946383[79]61|^49492A00|^4D4D002A|^FFD8FF(E0|DB)|^89504E470D0A1A0A/i;
+
+
+var url = process.argv[2];
+status('Fetching from URL %j...', url);
+
+httpGet(url)
+    .tap(function(res)
+    {
+        status("Got HTTP %s response.", res.statusCode);
+        //debug("  details: %s", ins(res, '  '));
+    })
+    .then(function(res)
+    {
+        var firstBytes = res.read(8);
+
+        if(imageHexSignaturesRE.test(firstBytes.toString('hex')))
+        {
+            status("Viewing response data using `feh`...");
+            var feh = spawn(['feh', '-']);
+            res.unshift(firstBytes);
+            res.pipe(feh.stdin);
+            return feh.promise;
+        }
+        else
+        {
+            status("Got non-image response:");
+            console.log(formatHex(Buffer.concat([firstBytes, res.read()])));
+        } // end if
+    })
+    .tap(function()
+    {
+        status("Done.");
+        process.exit(0);
+    })
+    .catch(function(error)
+    {
+        error("Got error: %s" + error.message);
+        debug("  details: %s", ins(error, '  '));
+        process.exit(1);
+    });
